@@ -27,9 +27,14 @@ struct BYOKClient: AgentClient {
         continuation: AsyncThrowingStream<AgentStreamEvent, Error>.Continuation
     ) async throws {
         let provider = settings.model.provider
-        guard !apiKey.isEmpty else { throw AgentClientTransportError.missingAPIKey(provider) }
+        if apiKey.isEmpty {
+            // Loopback servers run keyless; everything else must present a credential.
+            guard let endpoint = settings.custom, endpoint.allowsMissingAPIKey else {
+                throw AgentClientTransportError.missingAPIKey(provider)
+            }
+        }
 
-        var request = URLRequest(url: endpoint)
+        var request = URLRequest(url: try endpoint())
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.setValue("text/event-stream", forHTTPHeaderField: "accept")
@@ -37,8 +42,10 @@ struct BYOKClient: AgentClient {
         case .anthropic:
             request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
             request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        case .openAI:
-            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        case .openAI, .custom:
+            if !apiKey.isEmpty {
+                request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            }
         }
         request.httpBody = try JSONSerialization.data(
             withJSONObject: settings.requestBody(system: system, tools: tools, messages: messages),
@@ -51,12 +58,20 @@ struct BYOKClient: AgentClient {
         try await provider.parseSSE(bytes: bytes, continuation: continuation)
     }
 
-    private var endpoint: URL {
+    private func endpoint() throws -> URL {
         switch settings.model.provider {
         case .anthropic:
-            URL(string: "https://api.anthropic.com/v1/messages")!
+            return URL(string: "https://api.anthropic.com/v1/messages")!
         case .openAI:
-            URL(string: "https://api.openai.com/v1/responses")!
+            return URL(string: "https://api.openai.com/v1/responses")!
+        case .custom:
+            guard let custom = settings.custom else {
+                throw AgentClientTransportError.streamError(
+                    provider: .custom,
+                    message: "No custom endpoint is configured."
+                )
+            }
+            return custom.chatCompletionsURL
         }
     }
 }

@@ -114,7 +114,11 @@ extension MediaTab {
 
     @MainActor
     static func handlePanelFinderDrop(urls: [URL], into destFolderId: String?, editor: EditorViewModel) async {
-        _ = try? await editor.importFinderItems(urls, into: destFolderId)
+        do {
+            _ = try await editor.importFinderItems(urls, into: destFolderId)
+        } catch {
+            editor.reportMediaImportFailure(error)
+        }
     }
 
     func handleProviderDrop(_ providers: [NSItemProvider], into destFolderId: String?) {

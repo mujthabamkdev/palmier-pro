@@ -96,14 +96,9 @@ enum BundledFonts {
         return result
     }
 
-     // Handles both flattened and bundled Fonts/ layouts
+    // Handles both flattened and bundled Fonts/ layouts
     private static func findFontsRoot() -> URL? {
-        guard let resourceURL = Bundle.main.resourceURL else { return nil }
-        let candidates = [
-            resourceURL.appendingPathComponent("Fonts"),
-            resourceURL.appendingPathComponent("PalmierPro_PalmierPro.bundle/Fonts"),
-        ]
-        return candidates.first { FileManager.default.fileExists(atPath: $0.path) }
+        BundledResource.url("Fonts")
     }
 
     /// False for symbol/emoji/dingbat fonts — they'd render the family name

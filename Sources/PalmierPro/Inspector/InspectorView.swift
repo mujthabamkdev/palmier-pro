@@ -187,9 +187,34 @@ struct InspectorView: View {
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .monospacedDigit()
                 .fixedSize()
+            sectionVisibilityButton(
+                systemImage: "chevron.right",
+                action: { editor.inspectorPanelVisible = false },
+                label: L10n.string("Hide Inspector Panel")
+            )
         }
         .padding(.horizontal, AppTheme.Spacing.smMd)
         .panelHeaderBar()
+    }
+
+    /// Collapses the whole Inspector split item, so the freed width goes to the neighbouring
+    /// panel — the timeline in the Media layout. Blanking the section's content would keep the
+    /// width reserved and hide nothing useful.
+    private func sectionVisibilityButton(
+        systemImage: String,
+        action: @escaping () -> Void,
+        label: String
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+                .foregroundStyle(AppTheme.Text.tertiaryColor)
+                .frame(width: AppTheme.IconSize.xs, height: AppTheme.IconSize.xs)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(label)
+        .accessibilityLabel(label)
     }
 
     private var projectDuration: String {

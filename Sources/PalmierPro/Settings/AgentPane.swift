@@ -8,6 +8,7 @@ struct AgentPane: View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xxl) {
             SettingsSection(title: L10n.string("AI Chat")) {
                 apiKeySection
+                CustomEndpointSettingSection()
             }
             SettingsSection(title: L10n.string("Integrations")) {
                 mcpSection
@@ -131,8 +132,14 @@ private struct APIKeySettingRow: View {
             Text(provider.apiKeyPresentation.title)
                 .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.medium))
                 .foregroundStyle(AppTheme.Text.primaryColor)
+            consoleLink
+        }
+    }
 
-            Button(action: openConsole) {
+    @ViewBuilder
+    private var consoleLink: some View {
+        if let consoleURL = provider.apiKeyPresentation.consoleURL {
+            Button(action: { openConsole(consoleURL) }) {
                 HStack(spacing: AppTheme.Spacing.xxs) {
                     Text(provider.apiKeyPresentation.getKeyTitle)
                     Image(systemName: "arrow.up.right")
@@ -197,10 +204,8 @@ private struct APIKeySettingRow: View {
         hasKey ? maskedKey : provider.apiKeyPresentation.placeholder
     }
 
-    private func openConsole() {
-        NSWorkspace.shared.open(
-            provider.apiKeyPresentation.consoleURL, configuration: .init(), completionHandler: nil
-        )
+    private func openConsole(_ url: URL) {
+        NSWorkspace.shared.open(url, configuration: .init(), completionHandler: nil)
     }
 
     private func refresh() {
@@ -241,7 +246,7 @@ private struct APIKeySettingRow: View {
 @MainActor
 private extension AgentProvider {
     var apiKeyPresentation: (
-        title: String, getKeyTitle: String, placeholder: String, consoleURL: URL
+        title: String, getKeyTitle: String, placeholder: String, consoleURL: URL?
     ) {
         switch self {
         case .anthropic:
@@ -258,6 +263,139 @@ private extension AgentProvider {
                 "sk-…",
                 URL(string: "https://platform.openai.com/api-keys")!
             )
+        case .custom:
+            (
+                L10n.string("Custom Endpoint API Key"),
+                "",
+                L10n.string("Optional for localhost"),
+                nil
+            )
         }
+    }
+}
+
+/// Owns its own draft state so the settings list stays cheap to type-check, and so a failed
+/// save never leaves the agent service holding a half-applied endpoint.
+private struct CustomEndpointSettingSection: View {
+    @State private var baseURL = ""
+    @State private var modelID = ""
+    @State private var isConfigured = false
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
+            title
+            explanation
+            baseURLField
+            modelIDField
+            APIKeySettingRow(provider: .custom)
+            actions
+            errorMessage
+        }
+        .onAppear(perform: load)
+    }
+
+    private var title: some View {
+        Text(L10n.string("Custom Endpoint"))
+            .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.medium))
+            .foregroundStyle(AppTheme.Text.primaryColor)
+    }
+
+    private var explanation: some View {
+        Text(L10n.string("Use any OpenAI-compatible server. The URL and model id stay on this Mac; the key goes in the Keychain."))
+            .font(.system(size: AppTheme.FontSize.sm))
+            .foregroundStyle(AppTheme.Text.tertiaryColor)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var baseURLField: some View {
+        field(placeholder: "http://localhost:11434/v1", text: $baseURL)
+    }
+
+    private var modelIDField: some View {
+        field(placeholder: "qwen3-coder:30b", text: $modelID)
+    }
+
+    private var actions: some View {
+        HStack(spacing: AppTheme.Spacing.sm) {
+            Button(L10n.string("Save"), action: save)
+                .buttonStyle(.capsule(.prominent, size: .regular))
+                .controlSize(.large)
+                .disabled(!canSave)
+            removeButton
+        }
+    }
+
+    @ViewBuilder
+    private var removeButton: some View {
+        if isConfigured {
+            Button(action: clear) {
+                Image(systemName: "trash")
+                    .font(.system(size: AppTheme.FontSize.md))
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                    .frame(width: AppTheme.IconSize.md, height: AppTheme.IconSize.md)
+            }
+            .buttonStyle(.capsule(.secondary, size: .regular))
+            .controlSize(.large)
+            .help(L10n.string("Remove custom endpoint"))
+        }
+    }
+
+    @ViewBuilder
+    private var errorMessage: some View {
+        if let error {
+            Text(verbatim: error)
+                .font(.system(size: AppTheme.FontSize.sm))
+                .foregroundStyle(AppTheme.Status.errorColor)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var canSave: Bool {
+        !baseURL.trimmingCharacters(in: .whitespaces).isEmpty
+            && !modelID.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    private func field(placeholder: String, text: Binding<String>) -> some View {
+        TextField(placeholder, text: text)
+            .textFieldStyle(.plain)
+            .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
+            .foregroundStyle(AppTheme.Text.primaryColor)
+            .padding(.horizontal, AppTheme.Spacing.md)
+            .padding(.vertical, AppTheme.Spacing.smMd)
+            .background(
+                RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                    .fill(AppTheme.Background.baseColor.opacity(AppTheme.Opacity.medium))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                    .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.thin)
+            )
+    }
+
+    private func load() {
+        guard let endpoint = CustomAgentEndpointStore.load() else { return }
+        baseURL = endpoint.baseURL.absoluteString
+        modelID = endpoint.modelID
+        isConfigured = true
+    }
+
+    private func save() {
+        if let failure = CustomAgentEndpointStore.save(baseURL: baseURL, modelID: modelID) {
+            error = failure
+            return
+        }
+        error = nil
+        isConfigured = true
+        NotificationCenter.default.post(name: .agentCustomEndpointChanged, object: nil)
+    }
+
+    private func clear() {
+        CustomAgentEndpointStore.clear()
+        baseURL = ""
+        modelID = ""
+        isConfigured = false
+        error = nil
+        NotificationCenter.default.post(name: .agentCustomEndpointChanged, object: nil)
     }
 }

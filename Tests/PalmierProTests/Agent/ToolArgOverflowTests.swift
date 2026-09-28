@@ -85,3 +85,113 @@ struct ToolArgOverflowE2ETests {
         #expect(result.isError == true)
     }
 }
+
+/// #264: a raw JSON integer near Int.max decodes cleanly, so only an explicit frame-domain
+/// ceiling at the arg boundary keeps `startFrame + durationFrames` from trapping the process.
+@Suite("Tool arg frame ceiling")
+@MainActor
+struct ToolArgFrameCeilingTests {
+
+    private func harnessWithVideoTrack() -> (ToolHarness, MediaAsset) {
+        let h = ToolHarness()
+        _ = h.editor.insertTrack(at: 0, type: .video)
+        return (h, h.addAsset(type: .video))
+    }
+
+    @Test func addClipsRejectsIntMaxStartFrame() async {
+        let (h, asset) = harnessWithVideoTrack()
+        let result = await h.runRaw("add_clips", args: [
+            "entries": [["mediaRef": asset.id, "trackIndex": 0, "startFrame": Int.max]],
+        ])
+        #expect(result.isError == true)
+        #expect(ToolHarness.textOf(result).contains("must be between"))
+        #expect(h.editor.timeline.tracks[0].clips.isEmpty)
+    }
+
+    @Test func insertClipsRejectsIntMaxAtFrame() async {
+        let (h, asset) = harnessWithVideoTrack()
+        let result = await h.runRaw("insert_clips", args: [
+            "entries": [["mediaRef": asset.id, "trackIndex": 0, "atFrame": Int.max, "durationFrames": 30]],
+        ])
+        #expect(result.isError == true)
+        #expect(ToolHarness.textOf(result).contains("must be between"))
+    }
+
+    @Test func moveClipsRejectsIntMaxToFrame() async {
+        let clip = Fixtures.clip(id: "C1", start: 0, duration: 100)
+        let h = ToolHarness(timeline: Fixtures.timeline(tracks: [Fixtures.videoTrack(clips: [clip])]))
+        let result = await h.runRaw("move_clips", args: ["moves": [["clipId": "C1", "toFrame": Int.max]]])
+        #expect(result.isError == true)
+        #expect(ToolHarness.textOf(result).contains("must be between"))
+        #expect(h.editor.timeline.tracks[0].clips[0].startFrame == 0)
+    }
+
+    @Test func setClipPropertiesRejectsIntMaxDuration() async {
+        let clip = Fixtures.clip(id: "C1", start: 0, duration: 100)
+        let h = ToolHarness(timeline: Fixtures.timeline(tracks: [Fixtures.videoTrack(clips: [clip])]))
+        let result = await h.runRaw("set_clip_properties", args: [
+            "clipIds": ["C1"],
+            "durationFrames": Int.max,
+        ])
+        #expect(result.isError == true)
+        #expect(ToolHarness.textOf(result).contains("must be between"))
+    }
+
+    @Test func setClipPropertiesRejectsNegativeDuration() async {
+        let clip = Fixtures.clip(id: "C1", start: 0, duration: 100)
+        let h = ToolHarness(timeline: Fixtures.timeline(tracks: [Fixtures.videoTrack(clips: [clip])]))
+        let result = await h.runRaw("set_clip_properties", args: [
+            "clipIds": ["C1"],
+            "durationFrames": Int.min,
+        ])
+        #expect(result.isError == true)
+    }
+
+    @Test func addTextsRejectsIntMaxStartFrame() async {
+        let (h, _) = harnessWithVideoTrack()
+        let result = await h.runRaw("add_texts", args: [
+            "entries": [["startFrame": Int.max, "endFrame": 60, "content": "Title"]],
+        ])
+        #expect(result.isError == true)
+        #expect(ToolHarness.textOf(result).contains("must be between"))
+    }
+
+    /// `durationFrames * speed` converts back to Int, so an unbounded speed traps the same way.
+    @Test func setClipPropertiesRejectsOverflowSpeed() async {
+        let clip = Fixtures.clip(id: "C1", start: 0, duration: 100)
+        let h = ToolHarness(timeline: Fixtures.timeline(tracks: [Fixtures.videoTrack(clips: [clip])]))
+        let result = await h.runRaw("set_clip_properties", args: [
+            "clipIds": ["C1"],
+            "speed": 1e300,
+        ])
+        #expect(result.isError == true)
+        #expect(ToolHarness.textOf(result).contains("speed must be <="))
+    }
+
+    /// manage_multicam parses args by hand instead of decoding them, so the ceiling has to
+    /// hold at dispatch rather than inside `decodeToolArgs`.
+    @Test func handParsedToolRejectsIntMaxStartFrame() async {
+        let h = ToolHarness()
+        h.addAsset(id: "camA", type: .video, duration: 120)
+        h.addAsset(id: "camB", type: .video, duration: 110)
+        let result = await h.runRaw("manage_multicam", args: [
+            "create": [
+                "members": [
+                    ["mediaRef": "camA", "kind": "angle"],
+                    ["mediaRef": "camB", "kind": "angle"],
+                ],
+                "startFrame": Int.max,
+            ] as [String: Any],
+        ])
+        #expect(result.isError == true)
+        #expect(ToolHarness.textOf(result).contains("must be between"))
+    }
+
+    @Test func frameArgAtTheCeilingIsNotRejectedForRange() async {
+        let (h, asset) = harnessWithVideoTrack()
+        let result = await h.runRaw("add_clips", args: [
+            "entries": [["mediaRef": asset.id, "trackIndex": 0, "startFrame": maxFrameArg, "endFrame": 30]],
+        ])
+        #expect(ToolHarness.textOf(result).contains("must be between") == false)
+    }
+}

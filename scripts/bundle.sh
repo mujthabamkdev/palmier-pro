@@ -134,6 +134,10 @@ cp -R "$SPARKLE_FW" "$APP/Contents/Frameworks/Sparkle.framework"
 
 # Flatten SwiftPM's resource bundle into the app's Resources tree.
 RES_BUNDLE="$(dirname "$BIN")/PalmierPro_PalmierPro.bundle"
+# Newer SwiftPM emits macOS-style bundles that nest payloads under Contents/Resources.
+if [ -d "$RES_BUNDLE/Contents/Resources" ]; then
+  RES_BUNDLE="$RES_BUNDLE/Contents/Resources"
+fi
 if [ -d "$RES_BUNDLE/Fonts" ]; then
   cp -R "$RES_BUNDLE/Fonts" "$APP/Contents/Resources/"
 else

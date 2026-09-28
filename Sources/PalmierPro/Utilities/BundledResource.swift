@@ -12,8 +12,11 @@ enum BundledResource {
 
     static func url(_ path: String) -> URL? {
         let buildDirectory = Bundle(for: BundledResourceToken.self).bundleURL.deletingLastPathComponent()
+        // `bundle.resourceURL` is the only candidate that survives a resource bundle that nests
+        // its payload under Contents/Resources, which is how newer SwiftPM emits them.
         let candidates = [
             Bundle.main.resourceURL?.appendingPathComponent(path),
+            bundle.resourceURL?.appendingPathComponent(path),
             Bundle.main.resourceURL?.appendingPathComponent("PalmierPro_PalmierPro.bundle/\(path)"),
             buildDirectory.appendingPathComponent("PalmierPro_PalmierPro.bundle/\(path)"),
         ].compactMap { $0 }

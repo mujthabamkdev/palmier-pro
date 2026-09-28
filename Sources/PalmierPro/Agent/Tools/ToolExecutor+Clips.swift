@@ -625,6 +625,9 @@ extension ToolExecutor {
         if let s = input.speed, s <= 0 {
             throw ToolError("speed must be > 0 (got \(s))")
         }
+        if let s = input.speed, s > maxSpeedArg {
+            throw ToolError("speed must be <= \(maxSpeedArg) (got \(s))")
+        }
         if let v = input.volumeDb, !(VolumeScale.floorDb...VolumeScale.ceilingDb).contains(v) {
             throw ToolError("volumeDb must be between \(VolumeScale.floorDb) and +\(VolumeScale.ceilingDb) dB (got \(v))")
         }

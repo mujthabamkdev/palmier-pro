@@ -143,17 +143,21 @@ struct AgentPanelView: View {
                 Button {
                     service.model = model
                 } label: {
-                    Text(verbatim: model.displayName)
+                    Text(verbatim: service.modelTitle(model))
                 }
                 .disabled(!service.canSelectModel(model))
             }
         } label: {
-            footerPickerLabel(service.model.displayName) {
+            footerPickerLabel(service.modelTitle(service.model)) {
                 switch service.model.provider {
                 case .anthropic:
                     ExternalAgentLogo(agent: .claude, size: AppTheme.IconSize.xs)
                 case .openAI:
                     ProviderLogo(iconKey: "openai", size: AppTheme.IconSize.xs)
+                case .custom:
+                    Image(systemName: "server.rack")
+                        .font(.system(size: AppTheme.FontSize.xs))
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
                 }
             }
         }
@@ -161,7 +165,7 @@ struct AgentPanelView: View {
         .menuIndicator(.hidden)
         .layoutPriority(1)
         .accessibilityLabel(L10n.string("Model"))
-        .accessibilityValue(Text(verbatim: service.model.displayName))
+        .accessibilityValue(Text(verbatim: service.modelTitle(service.model)))
         .help(L10n.string("Model"))
     }
 
@@ -633,6 +637,13 @@ private extension AgentProvider {
                 L10n.string("Streaming through your OpenAI API key (BYOK)"),
                 L10n.string("Add an OpenAI API key or credits to use this model."),
                 L10n.string("or add your own OpenAI key")
+            )
+        case .custom:
+            (
+                L10n.string("using your custom endpoint"),
+                L10n.string("Streaming through your own OpenAI-compatible endpoint"),
+                L10n.string("Set up your custom endpoint in Settings. Localhost needs no key; other servers do."),
+                L10n.string("or set up your custom endpoint")
             )
         }
     }

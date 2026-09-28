@@ -74,9 +74,9 @@ struct AgentMessageView: View {
                     }
                 case .redactedThinking:
                     EmptyView()
-                case .openAIReasoning(let summary, let encryptedContent, _, _):
+                case .openAIReasoning(let summary, _, _, _, let isComplete):
                     if !summary.isEmpty {
-                        ThinkingSummaryView(text: summary, isComplete: !encryptedContent.isEmpty)
+                        ThinkingSummaryView(text: summary, isComplete: isComplete)
                     }
                 case .text(let text):
                     MarkdownText(text: text)

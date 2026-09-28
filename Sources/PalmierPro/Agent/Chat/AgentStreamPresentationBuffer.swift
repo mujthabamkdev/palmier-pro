@@ -31,7 +31,8 @@ private struct AgentStreamReducer: Sendable {
                 summary: existing + chunk,
                 encryptedContent: "",
                 itemID: nil,
-                model: model
+                model: model,
+                isComplete: false
             ))
         case .reasoningComplete(let itemID, let summary, let encryptedContent):
             let existing = takeStreamingReasoningSummary()
@@ -39,8 +40,15 @@ private struct AgentStreamReducer: Sendable {
                 summary: summary.isEmpty ? existing : summary,
                 encryptedContent: encryptedContent,
                 itemID: itemID,
-                model: model
+                model: model,
+                isComplete: true
             ))
+        case .messageStop(let reason):
+            // Closes reasoning the provider never terminated itself, so a chat/completions
+            // turn is not discarded as still-streaming when the turn ends.
+            closeStreamingReasoning()
+            stopReason = reason
+            return false
         case .textDelta(let chunk):
             if case .text(let existing)? = blocks.last {
                 blocks[blocks.count - 1] = .text(existing + chunk)
@@ -49,11 +57,18 @@ private struct AgentStreamReducer: Sendable {
             }
         case .toolUseComplete(let id, let name, let inputJSON):
             blocks.append(.toolUse(id: id, name: name, inputJSON: inputJSON))
-        case .messageStop(let reason):
-            stopReason = reason
-            return false
         }
         return true
+    }
+
+    private mutating func closeStreamingReasoning() {
+        guard case .openAIReasoning(let summary, _, _, let blockModel, false)? = blocks.last,
+              blockModel == model, !summary.isEmpty
+        else { return }
+        blocks[blocks.count - 1] = .openAIReasoning(
+            summary: summary, encryptedContent: "", itemID: nil,
+            model: model, isComplete: true
+        )
     }
 
     private mutating func updateThinking(
@@ -71,7 +86,7 @@ private struct AgentStreamReducer: Sendable {
     }
 
     private mutating func takeStreamingReasoningSummary() -> String {
-        guard case .openAIReasoning(let summary, _, _, let existingModel)? = blocks.last,
+        guard case .openAIReasoning(let summary, _, _, let existingModel, _)? = blocks.last,
               existingModel == model else { return "" }
         blocks.removeLast()
         return summary
@@ -164,6 +179,13 @@ actor AgentStreamPresentationBuffer {
     }
 }
 
+/// Milliseconds since `start`, for the turn-level latency log. Deliberately coarse: the
+/// point is "did the user wait on the network, or on us", not microsecond accounting.
+private func milliseconds(since start: ContinuousClock.Instant) -> Int {
+    let parts = (ContinuousClock.now - start).components
+    return Int(parts.seconds * 1000 + parts.attoseconds / 1_000_000_000_000_000)
+}
+
 func presentAgentStream(
     _ source: AsyncThrowingStream<AgentStreamEvent, Error>,
     model: AgentModel,
@@ -171,6 +193,7 @@ func presentAgentStream(
 ) async throws -> AgentStreamSnapshot {
     let buffer = AgentStreamPresentationBuffer(model: model)
     let snapshots = await buffer.snapshots()
+    let started = ContinuousClock.now
     let producer = Task.detached {
         do {
             for try await event in source {
@@ -183,10 +206,12 @@ func presentAgentStream(
         }
     }
     var lastRevision: UInt64 = 0
+    var firstOutputMs: Int?
 
     do {
         for try await snapshot in snapshots {
             guard snapshot.revision != lastRevision else { continue }
+            if firstOutputMs == nil { firstOutputMs = milliseconds(since: started) }
             await onSnapshot(snapshot)
             lastRevision = snapshot.revision
         }
@@ -200,6 +225,13 @@ func presentAgentStream(
         if final.revision != lastRevision {
             await onSnapshot(final)
         }
+        Log.agent.error(
+            "chat stream failed model=\(model.rawValue) provider=\(model.provider.rawValue) "
+                + "after=\(milliseconds(since: started))ms firstOutput=\(firstOutputMs.map { "\($0)ms" } ?? "none") "
+                + "error=\(error.localizedDescription)",
+            telemetry: "Agent chat stream failed",
+            data: ["model": model.rawValue, "provider": model.provider.rawValue]
+        )
         throw error
     }
 
@@ -208,5 +240,16 @@ func presentAgentStream(
     if final.revision != lastRevision {
         await onSnapshot(final)
     }
+    Log.agent.notice(
+        "chat stream done model=\(model.rawValue) provider=\(model.provider.rawValue) "
+            + "firstOutput=\(firstOutputMs.map { "\($0)ms" } ?? "none") "
+            + "total=\(milliseconds(since: started))ms stop=\(final.stopReason.rawValue)",
+        telemetry: "Agent chat stream completed",
+        data: [
+            "model": model.rawValue,
+            "provider": model.provider.rawValue,
+            "stopReason": final.stopReason.rawValue,
+        ]
+    )
     return final
 }

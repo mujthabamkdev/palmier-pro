@@ -7,11 +7,13 @@ extension Notification.Name {
 enum AgentProvider: String, CaseIterable, Sendable {
     case anthropic
     case openAI
+    case custom
 
     var displayName: String {
         switch self {
         case .anthropic: "Anthropic"
         case .openAI: "OpenAI"
+        case .custom: "Custom"
         }
     }
 
@@ -19,6 +21,7 @@ enum AgentProvider: String, CaseIterable, Sendable {
         switch self {
         case .anthropic: ("anthropic-api-key", "ANTHROPIC_API_KEY")
         case .openAI: ("openai-api-key", "OPENAI_API_KEY")
+        case .custom: ("custom-agent-api-key", "CUSTOM_AGENT_API_KEY")
         }
     }
 
@@ -76,6 +79,9 @@ enum AgentModel: String, CaseIterable, Codable, Sendable {
     case luna = "gpt-5.6-luna"
     case terra = "gpt-5.6-terra"
     case sol = "gpt-5.6-sol"
+    /// The user's own OpenAI-compatible endpoint. Its wire model id comes from
+    /// `AgentRunSettings.custom`, not from `rawValue`.
+    case custom = "custom"
 
     static let defaultModel: AgentModel = .terra
 
@@ -87,6 +93,7 @@ enum AgentModel: String, CaseIterable, Codable, Sendable {
         case .luna: "GPT-5.6 Luna"
         case .terra: "GPT-5.6 Terra"
         case .sol: "GPT-5.6 Sol"
+        case .custom: "Custom Endpoint"
         }
     }
 
@@ -94,13 +101,17 @@ enum AgentModel: String, CaseIterable, Codable, Sendable {
         switch self {
         case .sonnet5, .opus5, .fable5: .anthropic
         case .luna, .terra, .sol: .openAI
+        case .custom: .custom
         }
     }
 
     var maxOutputTokens: Int { 64_000 }
 
     var requiresPaidHostedPlan: Bool {
-        self == .fable5 || self == .sol
+        switch self {
+        case .fable5, .sol: true
+        case .sonnet5, .opus5, .luna, .terra, .custom: false
+        }
     }
 
     static func persisted(_ rawValue: String) -> AgentModel? {
@@ -113,6 +124,9 @@ enum AgentModel: String, CaseIterable, Codable, Sendable {
             [.low, .medium, .high, .xHigh, .max]
         case .openAI:
             AgentReasoningEffort.allCases
+        case .custom:
+            // Chat/completions has no portable reasoning knob, so nothing is sent.
+            [.none]
         }
     }
 
@@ -121,6 +135,14 @@ enum AgentModel: String, CaseIterable, Codable, Sendable {
 struct AgentRunSettings: Equatable, Sendable {
     let model: AgentModel
     let reasoningEffort: AgentReasoningEffort
+    /// Required when `model == .custom`, ignored otherwise.
+    var custom: CustomAgentEndpoint?
+
+    init(model: AgentModel, reasoningEffort: AgentReasoningEffort, custom: CustomAgentEndpoint? = nil) {
+        self.model = model
+        self.reasoningEffort = reasoningEffort
+        self.custom = model == .custom ? custom : nil
+    }
 }
 
 enum AgentReasoningPreferences {
@@ -152,8 +174,16 @@ enum AgentRouting {
         model: AgentModel,
         credentials: AgentCredentialSnapshot,
         hasHostedCredits: Bool,
-        hasPaidPlan: Bool
+        hasPaidPlan: Bool,
+        custom: CustomAgentEndpoint? = nil
     ) -> AgentRoute {
+        if model == .custom {
+            // A configured endpoint is always called directly, and only a loopback host may go
+            // without a credential — a remote host must never be called unauthenticated.
+            guard let custom else { return .unavailable }
+            if credentials[model.provider].isEmpty && !custom.allowsMissingAPIKey { return .unavailable }
+            return .direct
+        }
         if !credentials[model.provider].isEmpty { return .direct }
         if model.requiresPaidHostedPlan && !hasPaidPlan { return .unavailable }
         return hasHostedCredits ? .hosted : .unavailable
@@ -309,7 +339,7 @@ extension AgentRunSettings {
     ) -> [String: Any] {
         switch model.provider {
         case .anthropic:
-            AnthropicRequestBody.build(
+            return AnthropicRequestBody.build(
                 model: model,
                 reasoningEffort: reasoningEffort,
                 system: system,
@@ -317,9 +347,17 @@ extension AgentRunSettings {
                 messages: messages
             )
         case .openAI:
-            OpenAIRequestBody.build(
+            return OpenAIRequestBody.build(
                 model: model,
                 reasoningEffort: reasoningEffort,
+                system: system,
+                tools: tools,
+                messages: messages
+            )
+        case .custom:
+            guard let custom else { return [:] }
+            return OpenAIChatCompletionsRequestBody.build(
+                modelID: custom.modelID,
                 system: system,
                 tools: tools,
                 messages: messages
@@ -338,6 +376,8 @@ extension AgentProvider {
             try await AnthropicSSE.parse(bytes: bytes, continuation: continuation)
         case .openAI:
             try await OpenAISSE.parse(bytes: bytes, continuation: continuation)
+        case .custom:
+            try await OpenAIChatCompletionsSSE.parse(bytes: bytes, continuation: continuation)
         }
     }
 }

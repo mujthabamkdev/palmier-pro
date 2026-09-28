@@ -97,6 +97,68 @@ struct FolderReadTests {
         #expect(summary.folderCount == 0)
         #expect(e.folders.isEmpty)
     }
+
+    /// #453: files skipped anywhere inside a dropped folder have to be named, not dropped silently.
+    @Test func importFinderItemsReportsUnsupportedFileInsideFolder() async throws {
+        let e = editor()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("folder-import-unsupported-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data().write(to: root.appendingPathComponent("clip.mp4"))
+        try Data().write(to: root.appendingPathComponent("notes.txt"))
+
+        let summary = try await e.importFinderItems([root], into: nil)
+
+        #expect(summary.assetCount == 1)
+        #expect(e.mediaPanelToast?.message.contains("notes.txt") == true)
+    }
+
+    @Test func importFinderItemsReportsCountWhenSeveralFilesAreSkipped() async throws {
+        let e = editor()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("folder-import-many-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data().write(to: root.appendingPathComponent("clip.mp4"))
+        try Data().write(to: root.appendingPathComponent("notes.txt"))
+        try Data().write(to: root.appendingPathComponent("readme.md"))
+
+        _ = try await e.importFinderItems([root], into: nil)
+
+        let message = try #require(e.mediaPanelToast?.message)
+        #expect(message.contains("2"))
+    }
+
+    /// An unreadable folder imports nothing, so the toast is the only feedback the user gets.
+    @Test func importFinderItemsReportsUnreadableFolder() async throws {
+        let e = editor()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("folder-import-unreadable-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: root.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        _ = try await e.importFinderItems([root], into: nil)
+
+        let message = try #require(e.mediaPanelToast?.message)
+        #expect(message.contains(root.lastPathComponent))
+    }
+
+    /// A path that is gone is still imported: offline media and relink depend on that, and the
+    /// asset reports the missing file when it is finalized.
+    @Test func importFinderItemsAcceptsMissingFileAsPendingAsset() async throws {
+        let e = editor()
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("gone-\(UUID().uuidString).mp4")
+
+        let summary = try await e.importFinderItems([missing], into: nil, finalize: false)
+
+        #expect(summary.assetCount == 1)
+    }
 }
 
 @Suite("EditorViewModel — deleteFolders")

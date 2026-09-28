@@ -42,10 +42,31 @@ private struct MediaImportPlan: Sendable {
         let parent: Parent
     }
 
+    struct Rejection: Sendable {
+        enum Reason: Sendable {
+            case unsupportedType
+            case notLottie
+            case unreadable
+        }
+
+        let name: String
+        let reason: Reason
+
+        @MainActor var message: String {
+            switch reason {
+            case .unsupportedType:
+                L10n.string("Can't import \"\(name)\" — unsupported file type.")
+            case .notLottie:
+                L10n.string("Can't import \"\(name)\" — not a Lottie animation.")
+            case .unreadable:
+                L10n.string("Can't read \"\(name)\" — it may be missing or you may not have permission.")
+            }
+        }
+    }
+
     var folders: [Folder] = []
     var files: [File] = []
-    var rejectedUnsupportedNames: [String] = []
-    var rejectedLottieNames: [String] = []
+    var rejections: [Rejection] = []
 }
 
 private enum MediaImportScanner {
@@ -54,21 +75,37 @@ private enum MediaImportScanner {
         let parentFolderId: String?
     }
 
+    enum EntryKind: Sendable {
+        case directory
+        case file
+        case unreadable
+    }
+
     static func scan(roots: [Root]) -> MediaImportPlan {
         var plan = MediaImportPlan()
         for root in roots {
             let parent = MediaImportPlan.Parent.existingFolderId(root.parentFolderId)
-            if isDirectory(root.url) {
-                scanFolder(at: root.url, parent: parent, into: &plan)
-            } else {
-                scanFile(at: root.url, parent: parent, isRootItem: true, into: &plan)
+            switch kind(of: root.url) {
+            case .directory: scanFolder(at: root.url, parent: parent, into: &plan)
+            case .file: scanFile(at: root.url, parent: parent, into: &plan)
+            case .unreadable: reject(root.url, reason: .unreadable, into: &plan)
             }
         }
         return plan
     }
 
-    static func isDirectory(_ url: URL) -> Bool {
-        (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+    /// A path that is merely gone still imports — offline and relink flows depend on it — so
+    /// only a stat that fails for any other reason counts as unreadable.
+    static func kind(of url: URL) -> EntryKind {
+        do {
+            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            return (attributes[.type] as? FileAttributeType) == .typeDirectory ? .directory : .file
+        } catch let error as CocoaError {
+            // Foundation reports a missing path as fileReadNoSuchFile here, not fileNoSuchFile.
+            return [.fileNoSuchFile, .fileReadNoSuchFile].contains(error.code) ? .file : .unreadable
+        } catch {
+            return .unreadable
+        }
     }
 
     private static func scan(entries: [URL], parent: MediaImportPlan.Parent, into plan: inout MediaImportPlan) {
@@ -76,10 +113,10 @@ private enum MediaImportScanner {
             $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
         }
         for entry in sorted {
-            if isDirectory(entry) {
-                scanFolder(at: entry, parent: parent, into: &plan)
-            } else {
-                scanFile(at: entry, parent: parent, isRootItem: false, into: &plan)
+            switch kind(of: entry) {
+            case .directory: scanFolder(at: entry, parent: parent, into: &plan)
+            case .file: scanFile(at: entry, parent: parent, into: &plan)
+            case .unreadable: reject(entry, reason: .unreadable, into: &plan)
             }
         }
     }
@@ -89,7 +126,10 @@ private enum MediaImportScanner {
         parent: MediaImportPlan.Parent,
         into plan: inout MediaImportPlan
     ) {
-        guard let entries = directoryEntries(at: url) else { return }
+        guard let entries = directoryEntries(at: url) else {
+            reject(url, reason: .unreadable, into: &plan)
+            return
+        }
         let folderIndex = plan.folders.count
         plan.folders.append(.init(name: url.lastPathComponent, parent: parent))
         scan(entries: entries, parent: .plannedFolder(folderIndex), into: &plan)
@@ -106,15 +146,14 @@ private enum MediaImportScanner {
     private static func scanFile(
         at url: URL,
         parent: MediaImportPlan.Parent,
-        isRootItem: Bool,
         into plan: inout MediaImportPlan
     ) {
         guard let type = ClipType(fileExtension: url.pathExtension.lowercased()) else {
-            if isRootItem { plan.rejectedUnsupportedNames.append(url.lastPathComponent) }
+            reject(url, reason: .unsupportedType, into: &plan)
             return
         }
         if type == .lottie, !LottieVideoGenerator.isLottie(at: url) {
-            plan.rejectedLottieNames.append(url.lastPathComponent)
+            reject(url, reason: .notLottie, into: &plan)
             return
         }
         plan.files.append(.init(
@@ -123,6 +162,14 @@ private enum MediaImportScanner {
             name: url.deletingPathExtension().lastPathComponent,
             parent: parent
         ))
+    }
+
+    private static func reject(
+        _ url: URL,
+        reason: MediaImportPlan.Rejection.Reason,
+        into plan: inout MediaImportPlan
+    ) {
+        plan.rejections.append(.init(name: url.lastPathComponent, reason: reason))
     }
 }
 
@@ -237,14 +284,27 @@ extension EditorViewModel {
     @discardableResult
     func addMediaAsset(from url: URL, folderId: String? = nil, finalize: Bool = true) -> MediaAsset? {
         guard let type = ClipType(fileExtension: url.pathExtension.lowercased()) else {
-            mediaPanelToast = MediaPanelToast(message: L10n.string("Can't import \"\(url.lastPathComponent)\" — unsupported file type."))
+            reportMediaRejection(.init(name: url.lastPathComponent, reason: .unsupportedType))
             return nil
         }
         if type == .lottie, !LottieVideoGenerator.isLottie(at: url) {
-            mediaPanelToast = MediaPanelToast(message: L10n.string("Can't import \"\(url.lastPathComponent)\" — not a Lottie animation."))
+            reportMediaRejection(.init(name: url.lastPathComponent, reason: .notLottie))
             return nil
         }
         return addMediaAsset(from: url, type: type, folderId: folderId, finalize: finalize)
+    }
+
+    private func reportMediaRejection(_ rejection: MediaImportPlan.Rejection) {
+        mediaPanelToast = MediaPanelToast(message: rejection.message)
+    }
+
+    /// A Finder drop or open-panel import that failed outright still has to say so.
+    func reportMediaImportFailure(_ error: Error) {
+        Log.project.error(
+            "media import failed: \(error.localizedDescription)",
+            telemetry: "Media import failed"
+        )
+        mediaPanelToast = MediaPanelToast(message: L10n.string("Import failed — \(error.localizedDescription)"))
     }
 
     @discardableResult
@@ -343,10 +403,12 @@ extension EditorViewModel {
             return importedAssets
         }
 
-        if let name = plan.rejectedUnsupportedNames.last {
-            mediaPanelToast = MediaPanelToast(message: L10n.string("Can't import \"\(name)\" — unsupported file type."))
-        } else if let name = plan.rejectedLottieNames.last {
-            mediaPanelToast = MediaPanelToast(message: L10n.string("Can't import \"\(name)\" — not a Lottie animation."))
+        if plan.rejections.count == 1, let rejection = plan.rejections.first {
+            reportMediaRejection(rejection)
+        } else if plan.rejections.count > 1, let first = plan.rejections.first {
+            mediaPanelToast = MediaPanelToast(message: L10n.string(
+                "Skipped \(plan.rejections.count) items that can't be imported, starting with \"\(first.name)\"."
+            ))
         }
 
         let summary = MediaImportSummary(
@@ -397,9 +459,15 @@ extension EditorViewModel {
         ripple: Bool
     ) async {
         var before: MediaLibraryUndoSnapshot?
-        let summary = try? await importFinderItems(urls, into: mediaPanelCurrentFolderId, finalize: false) { apply in
-            before = self.mediaLibraryUndoSnapshot()
-            return self.undo.withoutRegistration { apply() }
+        let summary: MediaImportSummary?
+        do {
+            summary = try await importFinderItems(urls, into: mediaPanelCurrentFolderId, finalize: false) { apply in
+                before = self.mediaLibraryUndoSnapshot()
+                return self.undo.withoutRegistration { apply() }
+            }
+        } catch {
+            reportMediaImportFailure(error)
+            return
         }
         guard let summary, let before,
               summary.assetCount != 0 || summary.folderCount != 0 else { return }

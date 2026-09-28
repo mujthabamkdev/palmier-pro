@@ -5,7 +5,9 @@ import Testing
 @Suite("Agent providers")
 struct AgentProviderTests {
     @Test func modelCatalogContainsExactlySupportedModels() {
-        #expect(AgentModel.allCases.map { [$0.rawValue, $0.displayName] } == [
+        // `.custom` is a user-configured entry, not a catalog model, so it is asserted separately.
+        let catalog = AgentModel.allCases.filter { $0 != .custom }
+        #expect(catalog.map { [$0.rawValue, $0.displayName] } == [
             ["claude-sonnet-5", "Sonnet 5"],
             ["claude-opus-5", "Opus 5"],
             ["claude-fable-5", "Fable 5"],
@@ -16,17 +18,24 @@ struct AgentProviderTests {
         #expect(AgentModel.allCases.allSatisfy { $0.maxOutputTokens == 64_000 })
         #expect(AgentModel.defaultModel == .terra)
         #expect(AgentModel.persisted("claude-opus-4-8") == .opus5)
-        #expect(AgentModel.allCases.map(\.provider) == [
+        #expect(catalog.map(\.provider) == [
             .anthropic, .anthropic, .anthropic, .openAI, .openAI, .openAI,
         ])
-        #expect(AgentModel.allCases.filter(\.requiresPaidHostedPlan) == [.fable5, .sol])
+        #expect(catalog.filter(\.requiresPaidHostedPlan) == [.fable5, .sol])
         let anthropicEfforts: [AgentReasoningEffort] = [.low, .medium, .high, .xHigh, .max]
         let openAIEfforts = AgentReasoningEffort.allCases
-        #expect(AgentModel.allCases.filter { $0.provider == .anthropic }
+        #expect(catalog.filter { $0.provider == .anthropic }
             .allSatisfy { $0.supportedReasoningEfforts == anthropicEfforts })
-        #expect(AgentModel.allCases.filter { $0.provider == .openAI }
+        #expect(catalog.filter { $0.provider == .openAI }
             .allSatisfy { $0.supportedReasoningEfforts == openAIEfforts })
         #expect(openAIEfforts == [.none, .minimal, .low, .medium, .high, .xHigh, .max])
+    }
+
+    @Test func customModelIsNotAPaidHostedModelAndSendsNoReasoningKnob() {
+        #expect(AgentModel.custom.provider == .custom)
+        #expect(AgentModel.custom.requiresPaidHostedPlan == false)
+        #expect(AgentModel.custom.supportedReasoningEfforts == [.none])
+        #expect(AgentModel.persisted("custom") == .custom)
     }
 
     @Test func routingUsesOnlyTheSelectedProvidersKey() {

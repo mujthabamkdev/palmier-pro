@@ -7,17 +7,24 @@ final class AgentService {
 
     private var credentials = AgentCredentialSnapshot()
     private var apiKeyObserver: NSObjectProtocol?
+    private var endpointObserver: NSObjectProtocol?
     private let userDefaults: UserDefaults
     private var reasoningEfforts: [AgentModel: AgentReasoningEffort]
+    /// The user's own OpenAI-compatible endpoint, when one is configured.
+    private(set) var customEndpoint: CustomAgentEndpoint?
 
     init(userDefaults: UserDefaults = .standard) {
         self.userDefaults = userDefaults
-        self.model = userDefaults.string(forKey: "agentModel")
-            .flatMap(AgentModel.persisted)
-            ?? .defaultModel
+        let endpoint = CustomAgentEndpointStore.load(defaults: userDefaults)
+        self.customEndpoint = endpoint
         self.reasoningEfforts = Dictionary(uniqueKeysWithValues: AgentModel.allCases.map {
             ($0, AgentReasoningPreferences.effort(for: $0, defaults: userDefaults))
         })
+        let restored = userDefaults.string(forKey: "agentModel")
+            .flatMap(AgentModel.persisted)
+            ?? .defaultModel
+        // A saved custom model is only usable while an endpoint exists to call.
+        self.model = restored == .custom && endpoint == nil ? .defaultModel : restored
         reloadAPIKeys()
         apiKeyObserver = NotificationCenter.default.addObserver(
             forName: .agentAPIKeyChanged,
@@ -28,6 +35,19 @@ final class AgentService {
                 self?.reloadAPIKeys()
             }
         }
+        endpointObserver = NotificationCenter.default.addObserver(
+            forName: .agentCustomEndpointChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.reloadCustomEndpoint()
+            }
+        }
+    }
+
+    private func reloadCustomEndpoint() {
+        updateCustomEndpoint(CustomAgentEndpointStore.load(defaults: userDefaults))
     }
 
     private func reloadAPIKeys() {
@@ -41,6 +61,9 @@ final class AgentService {
         if let token = apiKeyObserver {
             NotificationCenter.default.removeObserver(token)
         }
+        if let token = endpointObserver {
+            NotificationCenter.default.removeObserver(token)
+        }
     }
 
     var route: AgentRoute {
@@ -48,7 +71,8 @@ final class AgentService {
             model: model,
             credentials: credentials,
             hasHostedCredits: AccountService.shared.isSignedIn && AccountService.shared.hasCredits,
-            hasPaidPlan: AccountService.shared.isPaid
+            hasPaidPlan: AccountService.shared.isPaid,
+            custom: customEndpoint
         )
     }
 
@@ -56,12 +80,32 @@ final class AgentService {
         route != .unavailable
     }
 
-    var availableModels: [AgentModel] { AgentModel.allCases }
+    /// The custom entry only appears once an endpoint exists, so the picker never offers a
+    /// model that cannot be called.
+    var availableModels: [AgentModel] {
+        AgentModel.allCases.filter { $0 != .custom || customEndpoint != nil }
+    }
 
     func canSelectModel(_ candidate: AgentModel) -> Bool {
-        !candidate.requiresPaidHostedPlan
+        if candidate == .custom { return customEndpoint != nil }
+        return !candidate.requiresPaidHostedPlan
             || AccountService.shared.isPaid
             || !credentials[candidate.provider].isEmpty
+    }
+
+    /// Built-ins show their catalog name; the custom entry shows the configured model id.
+    func modelTitle(_ model: AgentModel) -> String {
+        model == .custom ? (customEndpoint?.displayTitle ?? model.displayName) : model.displayName
+    }
+
+    /// Called by Settings after the endpoint is saved or cleared.
+    func updateCustomEndpoint(_ endpoint: CustomAgentEndpoint?) {
+        customEndpoint = endpoint
+        if endpoint == nil, model == .custom {
+            model = .defaultModel
+        } else if let endpoint, case .unavailable = route {
+            streamError = nil
+        }
     }
 
     var activeBYOKProvider: AgentProvider? {
@@ -78,7 +122,7 @@ final class AgentService {
     }
 
     func snapshotRunSettings() -> AgentRunSettings {
-        AgentRunSettings(model: model, reasoningEffort: reasoningEffort)
+        AgentRunSettings(model: model, reasoningEffort: reasoningEffort, custom: customEndpoint)
     }
 
     private func selectClient(for settings: AgentRunSettings) async -> (any AgentClient)? {
@@ -90,7 +134,8 @@ final class AgentService {
             model: settings.model,
             credentials: credentials,
             hasHostedCredits: AccountService.shared.isSignedIn && AccountService.shared.hasCredits,
-            hasPaidPlan: AccountService.shared.isPaid
+            hasPaidPlan: AccountService.shared.isPaid,
+            custom: settings.custom
         ) {
         case .direct:
             return BYOKClient(
@@ -545,8 +590,8 @@ final class AgentService {
             !signature.isEmpty
         case .redactedThinking(let data):
             !data.isEmpty
-        case .openAIReasoning(_, let encryptedContent, _, _):
-            !encryptedContent.isEmpty
+        case .openAIReasoning(_, _, _, _, let reasoningComplete):
+            reasoningComplete
         case .text(let text):
             !text.isEmpty
         case .toolUse, .toolResult:
@@ -744,7 +789,11 @@ enum AgentContentBlock: Codable, Sendable {
         summary: String,
         encryptedContent: String,
         itemID: String?,
-        model: AgentModel
+        model: AgentModel,
+        /// Set when the stream closed the reasoning item. Only `/v1/responses` sends
+        /// `encrypted_content`; chat/completions reasoning is closed by the turn's stop
+        /// event, so absence of that field must not mean "still streaming".
+        isComplete: Bool
     )
     case text(String)
     case toolUse(id: String, name: String, inputJSON: String)
@@ -755,7 +804,7 @@ enum AgentContentBlock: Codable, Sendable {
     }
     private enum CodingKeys: String, CodingKey {
         case kind, text, signature, data, id, name, input, toolUseId, content, isError
-        case summary, encryptedContent, itemID, model
+        case summary, encryptedContent, itemID, model, isComplete
     }
 
     init(from decoder: Decoder) throws {
@@ -769,11 +818,15 @@ enum AgentContentBlock: Codable, Sendable {
         case .redactedThinking:
             self = .redactedThinking(data: try c.decode(String.self, forKey: .data))
         case .openAIReasoning:
+            let encryptedContent = try c.decode(String.self, forKey: .encryptedContent)
             self = .openAIReasoning(
                 summary: try c.decode(String.self, forKey: .summary),
-                encryptedContent: try c.decode(String.self, forKey: .encryptedContent),
+                encryptedContent: encryptedContent,
                 itemID: try c.decodeIfPresent(String.self, forKey: .itemID),
-                model: try c.decode(AgentModel.self, forKey: .model)
+                model: try c.decode(AgentModel.self, forKey: .model),
+                // History written before this field existed is complete once it has content.
+                isComplete: try c.decodeIfPresent(Bool.self, forKey: .isComplete)
+                    ?? !encryptedContent.isEmpty
             )
         case .text:
             self = .text(try c.decode(String.self, forKey: .text))
@@ -802,12 +855,13 @@ enum AgentContentBlock: Codable, Sendable {
         case .redactedThinking(let data):
             try c.encode(Kind.redactedThinking, forKey: .kind)
             try c.encode(data, forKey: .data)
-        case .openAIReasoning(let summary, let encryptedContent, let itemID, let model):
+        case .openAIReasoning(let summary, let encryptedContent, let itemID, let model, let isComplete):
             try c.encode(Kind.openAIReasoning, forKey: .kind)
             try c.encode(summary, forKey: .summary)
             try c.encode(encryptedContent, forKey: .encryptedContent)
             try c.encodeIfPresent(itemID, forKey: .itemID)
             try c.encode(model, forKey: .model)
+            try c.encode(isComplete, forKey: .isComplete)
         case .text(let s):
             try c.encode(Kind.text, forKey: .kind)
             try c.encode(s, forKey: .text)

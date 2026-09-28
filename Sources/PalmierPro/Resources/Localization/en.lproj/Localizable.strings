@@ -143,6 +143,7 @@
 "Can't import \"%@\" — not a Lottie animation." = "Can't import \"%@\" — not a Lottie animation.";
 "Can't import \"%@\" — unsupported file type." = "Can't import \"%@\" — unsupported file type.";
 "Can't paste \"%@\" here — it would nest this timeline inside itself." = "Can't paste \"%@\" here — it would nest this timeline inside itself.";
+"Can't read \"%@\" — it may be missing or you may not have permission." = "Can't read \"%@\" — it may be missing or you may not have permission.";
 "Can't relink \"%@\". Required media type: %@. Selected media type: %@." = "Can't relink \"%@\". Required media type: %@. Selected media type: %@.";
 "Can't unlock sync on a multicam track — \"%@\" stays aligned through it." = "Can't unlock sync on a multicam track — \"%@\" stays aligned through it.";
 "Cancel" = "Cancel";
@@ -259,6 +260,8 @@
 "Crop applies to one clip at a time" = "Crop applies to one clip at a time";
 "Curves" = "Curves";
 "Custom Aspect Ratio" = "Custom Aspect Ratio";
+"Custom Endpoint" = "Custom Endpoint";
+"Custom Endpoint API Key" = "Custom Endpoint API Key";
 "Custom…" = "Custom…";
 "Cut" = "Cut";
 "Cut to the beat" = "Cut to the beat";
@@ -356,6 +359,8 @@
 "Enhance resolution or frame rate with AI" = "Enhance resolution or frame rate with AI";
 "Enhanced with FLUX.3 at 1080p." = "Enhanced with FLUX.3 at 1080p.";
 "Enter Full Screen" = "Enter Full Screen";
+"Enter a model identifier." = "Enter a model identifier.";
+"Enter a valid http:// or https:// base URL." = "Enter a valid http:// or https:// base URL.";
 "Estimated cost. Actual billing may differ slightly." = "Estimated cost. Actual billing may differ slightly.";
 "Exclusion" = "Exclusion";
 "Expand" = "Expand";
@@ -457,6 +462,7 @@
 "Help" = "Help";
 "Hide Guides" = "Hide Guides";
 "Hide Info" = "Hide Info";
+"Hide Inspector Panel" = "Hide Inspector Panel";
 "Hide Timeline Tabs" = "Hide Timeline Tabs";
 "Hide clip keyframes" = "Hide clip keyframes";
 "Hide reasoning" = "Hide reasoning";
@@ -478,6 +484,7 @@
 "Import" = "Import";
 "Import Media" = "Import Media";
 "Import Media…" = "Import Media…";
+"Import failed — %@" = "Import failed — %@";
 "Import footage" = "Import footage";
 "Import your footage here, or drag and drop, or copy-paste, into the media panel." = "Import your footage here, or drag and drop, or copy-paste, into the media panel.";
 "Include screenshot" = "Include screenshot";
@@ -680,6 +687,7 @@
 "Opening Google" = "Opening Google";
 "Opening Google…" = "Opening Google…";
 "Open…" = "Open…";
+"Optional for localhost" = "Optional for localhost";
 "Organize with Agent" = "Organize with Agent";
 "Original" = "Original";
 "Original FPS" = "Original FPS";
@@ -763,6 +771,7 @@
 "Remove Dead Air" = "Remove Dead Air";
 "Remove Marker" = "Remove Marker";
 "Remove background sound and keep speech" = "Remove background sound and keep speech";
+"Remove custom endpoint" = "Remove custom endpoint";
 "Remove filler words" = "Remove filler words";
 "Remove from Queue" = "Remove from Queue";
 "Remove from Recents" = "Remove from Recents";
@@ -859,6 +868,7 @@
 "Server URL" = "Server URL";
 "Set as first frame" = "Set as first frame";
 "Set as reference" = "Set as reference";
+"Set up your custom endpoint in Settings. Localhost needs no key; other servers do." = "Set up your custom endpoint in Settings. Localhost needs no key; other servers do.";
 "Settings" = "Settings";
 "Settings…" = "Settings…";
 "Setup instructions" = "Setup instructions";
@@ -900,6 +910,7 @@
 "Skip" = "Skip";
 "Skip Backward" = "Skip Backward";
 "Skip Forward" = "Skip Forward";
+"Skipped %lld items that can't be imported, starting with \"%@\"." = "Skipped %lld items that can't be imported, starting with \"%@\".";
 "Slide Up" = "Slide Up";
 "Small" = "Small";
 "Smart search" = "Smart search";
@@ -934,6 +945,7 @@
 "Storage" = "Storage";
 "Streaming through your Anthropic API key (BYOK)" = "Streaming through your Anthropic API key (BYOK)";
 "Streaming through your OpenAI API key (BYOK)" = "Streaming through your OpenAI API key (BYOK)";
+"Streaming through your own OpenAI-compatible endpoint" = "Streaming through your own OpenAI-compatible endpoint";
 "Strikethrough" = "Strikethrough";
 "Student" = "Student";
 "Style" = "Style";
@@ -1048,6 +1060,7 @@
 "Use Freeform" = "Use Freeform";
 "Use Freeform to edit individual crop insets." = "Use Freeform to edit individual crop insets.";
 "Use an aspect ratio with two positive numbers, such as 3:2." = "Use an aspect ratio with two positive numbers, such as 3:2.";
+"Use any OpenAI-compatible server. The URL and model id stay on this Mac; the key goes in the Keychain." = "Use any OpenAI-compatible server. The URL and model id stay on this Mac; the key goes in the Keychain.";
 "Use as first frame or reference" = "Use as first frame or reference";
 "Use for non-English or mixed-language audio." = "Use for non-English or mixed-language audio.";
 "Use trimmed portion only" = "Use trimmed portion only";
@@ -1128,7 +1141,9 @@
 "lowercase" = "lowercase";
 "or add your own Anthropic key" = "or add your own Anthropic key";
 "or add your own OpenAI key" = "or add your own OpenAI key";
+"or set up your custom endpoint" = "or set up your custom endpoint";
 "result" = "result";
 "using Anthropic API key" = "using Anthropic API key";
 "using OpenAI API key" = "using OpenAI API key";
+"using your custom endpoint" = "using your custom endpoint";
 "you@example.com — so we can reply" = "you@example.com — so we can reply";

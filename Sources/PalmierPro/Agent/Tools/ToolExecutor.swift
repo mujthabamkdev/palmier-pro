@@ -165,6 +165,9 @@ final class ToolExecutor {
             data: ["tool": tool.rawValue, "projectId": editor.projectId ?? "unknown"]
         )
         do {
+            if let badPath = firstOutOfFrameRangePath(in: args, path: tool.rawValue) {
+                throw ToolError("\(badPath): integer must be between -\(maxFrameArg) and \(maxFrameArg)")
+            }
             let resolved = try expandingIdPrefixes(in: args, editor: editor)
             readRevision = editor.beginAgentTimelineRead(
                 timelineReadActivity(for: tool, args: resolved, editor: editor)
@@ -485,6 +488,32 @@ private func firstNonFiniteNumberPath(in value: Any, path: String) -> String? {
     if let dict = value as? [String: Any] {
         for (k, v) in dict {
             if let p = firstNonFiniteNumberPath(in: v, path: "\(path).\(k)") { return p }
+        }
+    }
+    return nil
+}
+
+/// Frame-domain ceiling for every integer tool argument. 2^40 frames is ~19,000 years at
+/// 60 fps, so no real request is affected, while every downstream `+` and `*` on frame
+/// or duration values stays far from `Int` overflow. Swift traps on that overflow and the
+/// trap is not catchable, so arguments past the ceiling must be refused at the boundary.
+let maxFrameArg = 1 << 40
+
+/// Speed ceiling for the same reason: a clip converts `durationFrames * speed` back to `Int`.
+let maxSpeedArg: Double = 1000
+
+/// Rejects frame-domain integers no timeline can represent, before any handler does
+/// arithmetic on them. Applied once at dispatch so hand-parsed and decoded tools share it.
+private func firstOutOfFrameRangePath(in value: Any, path: String) -> String? {
+    if let i = exactJSONInt(value), i > maxFrameArg || i < -maxFrameArg { return path }
+    if let arr = value as? [Any] {
+        for (i, v) in arr.enumerated() {
+            if let p = firstOutOfFrameRangePath(in: v, path: "\(path)[\(i)]") { return p }
+        }
+    }
+    if let dict = value as? [String: Any] {
+        for (k, v) in dict {
+            if let p = firstOutOfFrameRangePath(in: v, path: "\(path).\(k)") { return p }
         }
     }
     return nil

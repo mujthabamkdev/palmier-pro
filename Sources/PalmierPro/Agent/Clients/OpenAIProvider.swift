@@ -56,7 +56,7 @@ enum OpenAIRequestBody {
                     switch block {
                     case .thinking, .redactedThinking:
                         continue
-                    case .openAIReasoning(let summary, let encryptedContent, let itemID, let reasoningModel):
+                    case .openAIReasoning(let summary, let encryptedContent, let itemID, let reasoningModel, _):
                         guard reasoningModel == model, !encryptedContent.isEmpty else { continue }
                         flushMessage()
                         var item: [String: Any] = [
